@@ -1,5 +1,5 @@
 1brc
-.idea
+.idea/*
 __pycache__
 measurements.txt
 

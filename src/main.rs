@@ -1,12 +1,48 @@
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io;
+use std::io::{BufRead, BufReader, Read};
+use std::ops::Deref;
 use std::path::PathBuf;
 
-fn take_tokens(mut count: &mut usize, reader: &mut impl BufRead) -> Option<(Box<[u8]>, isize)>{
+struct MmapReader {
+    map: memmap2::Mmap,
+    file: File,
+    offset: usize
+}
+
+impl Read for MmapReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let bytes_left = self.map.as_ref().len()-self.offset;
+        let bytes_read = std::cmp::min(bytes_left, buf.len());
+        let map_slice = &self.map.deref()[self.offset..self.offset+bytes_read];
+        let mut buf_slice = &mut buf[..bytes_read];
+        buf_slice.copy_from_slice(map_slice);
+        self.offset += bytes_read;
+        Ok(bytes_read)
+    }
+}
+impl MmapReader {
+    fn bufreader(self) -> BufReader<MmapReader> {
+        BufReader::new(self)
+    }
+    fn new(file: File) -> MmapReader {
+        let map = unsafe {
+            // Safety: this is a read only map
+            memmap2::Mmap::map(&file).expect("Unable to mmap file!")
+        };
+        let offset = 0;
+        MmapReader{
+            map,
+            file,
+            offset
+        }
+    }
+}
+
+fn take_tokens(reader: &mut impl BufRead) -> Option<(Box<[u8]>, isize)>{
     let mut name_buf = vec![];
     let read = reader.read_until(b';',&mut name_buf).unwrap();
-    *count = count.clone() + read;
     if read <= 1 {
         return None; // EOF reached
     }
@@ -38,12 +74,9 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let filepath: PathBuf = PathBuf::from(&args[1]);
     let file: File = File::open(filepath).unwrap();
-    let filesize = file.metadata().unwrap().len();
-    let count: usize = 0;
     let mut map: HashMap<Box<[u8]>, (usize, isize, isize,isize)> = HashMap::new();
-    let mut reader = BufReader::new(file);
-    let mut whatevs = 0;
-    while let Some((station_name, measurement_times_ten)) = take_tokens(&mut whatevs, &mut reader) {
+    let mut reader = MmapReader::new(file).bufreader();
+    while let Some((station_name, measurement_times_ten)) = take_tokens(&mut reader) {
 
         if let Some(value) = map.get_mut(&station_name) {
             value.0 += 1;
