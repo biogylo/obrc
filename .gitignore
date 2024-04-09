@@ -1,6 +1,8 @@
 1brc
 .idea/*
 __pycache__
+.cargo/
+
 measurements.txt
 
 # Added by cargo

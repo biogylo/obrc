@@ -14,3 +14,4 @@ rust                    -> 1 minute 31 seconds
 rust (mmapped)          -> 1 minute 13 seconds
 rust (mmapped + rayon)  -> 10 seconds
 rust (unsafe mmapped + rayon) -> 8 seconds
+rust (unsafe mmapped + rayon + halfbrown) -> under 3 seconds

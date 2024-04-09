@@ -3,8 +3,14 @@ use std::fs::File;
 use std::path::PathBuf;
 use itertools::Itertools;
 use rayon::prelude::*;
-use hashbrown::HashMap;
+use halfbrown::HashMap;
+// use hashbrown::HashMap;
+
+use fasthash::{FastHash, FastHasher, StreamHasher};
+
 // use std::collections::HashMap;
+// use ahash::AHashMap;
+
 #[derive(Debug)]
 struct Mmap {
     map:memmap2::Mmap,
@@ -42,7 +48,9 @@ fn partition(slice:&[u8], n_readers:usize) -> Vec<&[u8]> {
     unsafe {
     for idx in 1..n_readers - 1 {
         let candidate = division_size * idx;
-        boundaries[idx] = candidate + 1 + slice.get_unchecked(candidate..).iter().position(|b| *b == b'\n').expect("Boundary is required to be");
+        boundaries[idx] = candidate + 1 + slice.get_unchecked(candidate..)
+            .iter().position(|b| *b == b'\n')
+            .expect("Boundary is required to be");
     }
     }
     // eprintln!("Boundaries: {:?}", boundaries);
@@ -52,11 +60,8 @@ fn partition(slice:&[u8], n_readers:usize) -> Vec<&[u8]> {
 }
 
 
-fn parse( line:&[u8]) -> Option<(&[u8], isize)>{
+fn parse( line:&[u8]) -> (&[u8], isize){
     let read = line.len();
-    if read <= 1 {
-        return None; // EOF reached
-    }
     // SAFETY: We are assuming, as the challenge tells us, that there is indeed a decimal before the line ends
     unsafe {
         // Take the decimal
@@ -68,13 +73,13 @@ fn parse( line:&[u8]) -> Option<(&[u8], isize)>{
             b';' => {
                 let location= line.get_unchecked(..read-4);
                 let number = decimal + units;
-                Some((location,number))
+                (location,number)
 
             },
             b'-' => {
                 let location= line.get_unchecked(..read-5);
                 let number = -(decimal + units);
-                Some((location,number))
+                (location,number)
             },
             tens => {
 
@@ -83,13 +88,13 @@ fn parse( line:&[u8]) -> Option<(&[u8], isize)>{
                 b';' => {
                     let location= line.get_unchecked(..read-5);
                     let number = decimal + units + tens;
-                    Some((location,number))
+                    (location,number)
 
                 },
                 b'-' => {
                     let location= line.get_unchecked(..read-6);
                     let number = -(decimal + units + tens);
-                    Some((location,number))
+                    (location,number)
                 },
                 _ => {
                     unreachable!();
@@ -101,14 +106,12 @@ fn parse( line:&[u8]) -> Option<(&[u8], isize)>{
 }
 
 fn aggregate_stations(mmap:&[u8]) -> HashMap<Box<[u8]>, (usize, isize, isize,isize)> {
-    let mut map: HashMap<Box<[u8]>, (usize, isize, isize,isize)> = HashMap::new();
+    let mut map: HashMap<Box<[u8]>, (usize, isize, isize,isize)> = Default::default();
     let mut working_rest = mmap;
     while let Some(bytes_read) = working_rest.iter().position(|c| *c == b'\n') {
 
         let line = unsafe {working_rest.get_unchecked(0..bytes_read)};
-        let Some((station_name, measurement_times_ten)) = parse(line) else {
-            return map;
-        };
+        let (station_name, measurement_times_ten) = parse(line);
         working_rest = unsafe {working_rest.get_unchecked(bytes_read+1..)};
         if let Some(value) = map.get_mut(station_name) {
             value.0 += 1;
@@ -124,6 +127,7 @@ fn aggregate_stations(mmap:&[u8]) -> HashMap<Box<[u8]>, (usize, isize, isize,isi
         }
         // eprintln!("{} - {} -> {:?}", std::str::from_utf8(&station_name).unwrap(),measurement_times_ten, map[&station_name]);
     }
+    //eprintln!("Hashbrown length -> {}",map.len());
     map
 }
 
@@ -135,8 +139,8 @@ fn main() {
     let map = Mmap::new(file);
     let readers = partition(map.as_slice(),16);
     rayon::ThreadPoolBuilder::new().num_threads(16).build_global().unwrap();
-    let _hashmaps: Vec<HashMap<Box<[u8]>,(usize,isize,isize,isize)>> = readers
-            .iter()
+    let _hashmaps: Vec< HashMap<Box<[u8]>, (usize, isize, isize,isize)> > = readers
+            .par_iter()
         .map(|mmap_reader| aggregate_stations(mmap_reader))
         .collect();
     // println!("{:?}", _hashmaps)
